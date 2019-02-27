@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset=utf-8>
+    <title>My first three.js app</title>
+    <style>
+        body { margin: 0; }
+        canvas { width: 100%; height: 100% }
+    </style>
+</head>
+<body>
+<script src="three.js"></script>
+ <img id="albedo" src="0000.png" width="512" height="512">
+<canvas id="tensorflow"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"> </script>
+
+<script id="bleed-vert" type="x-shader/x-vertex">
+			varying vec2 vUv;
+			varying vec4 gPosition;
+			void main() {
+				vUv = uv;
+				gPosition=gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}
+</script>
+<script id="bleed-frag" type="x-shader/x-fragment">
+			varying vec2 vUv;
+			uniform sampler2D buffer;
+
+			varying vec4 gPosition;
+			void main() {
+				vec3 color = texture2D(buffer, vUv).rgb;
+
+				gl_FragColor.rgb = color;
+				gl_FragColor.a = 1.0;
+			}
+</script>
+<script>
+    var canvas = document.getElementById('tensorflow');
+
+    var  canvasTexture = new THREE.CanvasTexture(canvas);
+    var model=null;
+    const MODEL_URL = 'web_model/tensorflowjs_model.pb';
+    const WEIGHTS_URL = 'web_model/weights_manifest.json';
+    const OUTPUT_NODE_NAME = 'generator/Tanh1';
+    const INPUT_NODE_NAME='concat';
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+
+    var renderer = new THREE.WebGLRenderer();
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    document.body.appendChild( renderer.domElement );
+    var geometry = new THREE.BoxGeometry( 1, 1, 1 );
+    var material =  new THREE.ShaderMaterial( {
+        vertexShader: document.querySelector( '#bleed-vert' ).textContent.trim(),
+        fragmentShader: document.querySelector( '#bleed-frag' ).textContent.trim(),
+        uniforms: {
+            buffer:  { value: canvasTexture }
+
+        }
+    });
+    var cube = new THREE.Mesh( geometry, material );
+    scene.add( cube );
+    var albedo=document.getElementById("albedo");
+    camera.position.z = 5;
+    loadModel(MODEL_URL,WEIGHTS_URL);
+    function animate() {
+        console.log(canvasTexture);
+        requestAnimationFrame( animate );
+        renderer.render( scene, camera );
+    }
+
+
+
+    async function loadModel(MODEL_URL,WEIGHTS_URL)
+    {
+        console.log("111");
+        model=await tf.loadFrozenModel(MODEL_URL,WEIGHTS_URL);
+        console.log("222");
+        predict(tf.fromPixels(albedo),tf.fromPixels(albedo),tf.fromPixels(albedo),tf.fromPixels(albedo),model,INPUT_NODE_NAME,OUTPUT_NODE_NAME);
+        animate();
+
+    }
+
+    async function predict(albedo,direct,normal,depth,model,INPUT_NODE_NAME,OUTPUT_NODE_NAME) {
+        const y=tf.tidy(() => {
+            const PREPROCESS_DIVISOR = tf.scalar(255 / 2);
+            albedo= tf.reverse(albedo,-1);
+            direct= tf.reverse(direct,-1);
+            normal= tf.reverse(normal,-1);
+            depth= tf.reverse(depth,-1);
+            const preprocessedInputAlbedo = tf.div(
+                tf.sub(albedo.asType('float32'), PREPROCESS_DIVISOR),
+                PREPROCESS_DIVISOR);
+            const preprocessedInputDirect = tf.div(
+                tf.sub(direct.asType('float32'), PREPROCESS_DIVISOR),
+                PREPROCESS_DIVISOR);
+            const preprocessedInputNormal = tf.div(
+                tf.sub(normal.asType('float32'), PREPROCESS_DIVISOR),
+                PREPROCESS_DIVISOR);
+            const preprocessedInputDepth = tf.div(
+                tf.sub(depth.asType('float32'), PREPROCESS_DIVISOR),
+                PREPROCESS_DIVISOR);
+            // const preprocessedInputAo = tf.div(
+            // 	tf.sub(ao.asType('float32'), PREPROCESS_DIVISOR),
+            // 	PREPROCESS_DIVISOR);
+            // const a=tf.mul(
+            //     tf.add(preprocessedInputAo.asType('float32'), 1),
+            //     PREPROCESS_DIVISOR);
+            // a=a.toInt();
+            //a.print();
+            const reshapedInputAlbedo =preprocessedInputAlbedo.reshape([1, ...preprocessedInputAlbedo.shape]);
+            const reshapedInputDirect =preprocessedInputDirect.reshape([1, ...preprocessedInputDirect.shape]);
+            const reshapedInputNormal =preprocessedInputNormal.reshape([1, ...preprocessedInputNormal.shape]);
+            const reshapedInputDepth =preprocessedInputDepth.reshape([1, ...preprocessedInputDepth.shape]);
+            //	const reshapedInputAo =preprocessedInputAo.reshape([1, ...preprocessedInputAo.shape]);
+            const imageConcat=tf.concat([reshapedInputAlbedo,reshapedInputDirect,reshapedInputNormal,reshapedInputDepth],3);
+            //  imageConcat.print();
+            console.time("4444");
+            var output=model.predict(
+                {[INPUT_NODE_NAME]: imageConcat}, OUTPUT_NODE_NAME);
+            console.timeEnd("4444");
+            output=tf.mul(
+                tf.add(output, 1),
+                PREPROCESS_DIVISOR).toInt();
+            output=output.reshape([512,512,3]);
+            output= tf.reverse(output,-1);
+            console.timeEnd("1111");
+
+            return output;
+            //
+            // output
+        });
+
+        tf.toPixels(y,document.getElementById("tensorflow"));
+
+
+
+    }
+
+
+</script>
+</body>
+</html>
